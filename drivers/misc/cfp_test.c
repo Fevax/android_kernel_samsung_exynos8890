@@ -10,9 +10,6 @@
 #include <linux/types.h>
 #include <linux/slab.h>
 
-#include <linux/rkp_cfp.h>
-
-
 void print_all_rrk(void){
 	struct task_struct * tsk;
 	struct thread_info * thread;

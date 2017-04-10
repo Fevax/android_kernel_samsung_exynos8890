@@ -34,12 +34,6 @@
 #include "avc_ss.h"
 #include "classmap.h"
 
-// [ SEC_SELINUX_PORTING_COMMON
-#ifdef SEC_SELINUX_DEBUG
-#include <linux/signal.h>
-#endif
-// ] SEC_SELINUX_PORTING_COMMON
-
 #define AVC_CACHE_SLOTS			512
 #define AVC_DEF_CACHE_THRESHOLD		512
 #define AVC_CACHE_RECLAIM		16
@@ -191,7 +185,7 @@ void __init avc_init(void)
 	atomic_set(&avc_cache.lru_hint, 0);
 
 	avc_node_cachep = kmem_cache_create("avc_node", sizeof(struct avc_node),
-					     0, SLAB_PANIC, NULL);
+					0, SLAB_PANIC, NULL);
 	avc_xperms_cachep = kmem_cache_create("avc_xperms_node",
 					sizeof(struct avc_xperms_node),
 					0, SLAB_PANIC, NULL);
@@ -239,12 +233,12 @@ int avc_get_hash_stats(char *page)
 /*
  * using a linked list for extended_perms_decision lookup because the list is
  * always small. i.e. less than 5, typically 1
-*/
+ */
 static struct extended_perms_decision *avc_xperms_decision_lookup(u8 driver,
 					struct avc_xperms_node *xp_node)
 {
 	struct avc_xperms_decision_node *xpd_node;
-	
+
 	list_for_each_entry(xpd_node, &xp_node->xpd_head, xpd_list) {
 		if (xpd_node->xpd.driver == driver)
 			return &xpd_node->xpd;
@@ -257,7 +251,7 @@ avc_xperms_has_perm(struct extended_perms_decision *xpd,
 					u8 perm, u8 which)
 {
 	unsigned int rc = 0;
-	
+
 	if ((which == XPERMS_ALLOWED) &&
 			(xpd->used & XPERMS_ALLOWED))
 		rc = security_xperm_test(xpd->allowed->p, perm);
@@ -431,7 +425,7 @@ static int avc_xperms_populate(struct avc_node *node,
 		if (!dest_xpd)
 			goto error;
 		avc_copy_xperms_decision(&dest_xpd->xpd, &src_xpd->xpd);
-	list_add(&dest_xpd->xpd_list, &dest->xpd_head);
+		list_add(&dest_xpd->xpd_list, &dest->xpd_head);
 	}
 	node->ae.xp_node = dest;
 	return 0;
@@ -996,62 +990,7 @@ static noinline int avc_denied(u32 ssid, u32 tsid,
 	if (flags & AVC_STRICT)
 		return -EACCES;
 
-// [ SEC_SELINUX_PORTING_COMMON
-#ifdef SEC_SELINUX_DEBUG
-
-        /* SEC_SELINUX : denied && auditallow means "never happen" at current sepolicy. Valid Enforcing denial only. */
-	if ( (requested & avd->auditallow) && selinux_enforcing && !(avd->flags & AVD_FLAGS_PERMISSIVE) )  {
-
-		char *scontext, *tcontext;
-		const char **perms;
-		int i, perm;
-		int rc1, rc2;
-		u32 scontext_len, tcontext_len;
-
-		perms = secclass_map[tclass-1].perms;
-		i = 0;
-		perm = 1;
-		while (i < (sizeof(requested) * 8)) {
-			if ((perm & requested) && perms[i])
-				break;
-			i++;
-			perm <<= 1;
-		}
-
-		rc1 = security_sid_to_context(ssid, &scontext, &scontext_len);
-		rc2 = security_sid_to_context(tsid, &tcontext, &tcontext_len);
-
-		if (rc1 || rc2) {
-			printk(KERN_ERR "SELinux DEBUG : %s: ssid=%d tsid=%d tclass=%s perm=%s requested(%d) auditallow(%d)\n",
-		       __func__, ssid, tsid, secclass_map[tclass-1].name, perms[i], requested, avd->auditallow);
-		}
-		else {
-			printk(KERN_ERR "SELinux DEBUG : %s: scontext=%s tcontext=%s tclass=%s perm=%s requested(%d) auditallow(%d)\n",
-		       __func__, scontext, tcontext, secclass_map[tclass-1].name, perms[i], requested, avd->auditallow);
-		}
-
-		/* print call stack */
-		printk(KERN_ERR "SELinux DEBUG : FATAL denial and start dump_stack\n");
-		dump_stack();
-
-		/* enforcing : SIGABRT and take debuggerd log */
-		if (selinux_enforcing && !(avd->flags & AVD_FLAGS_PERMISSIVE)) {
-			printk(KERN_ERR "SELinux DEBUG : send SIGABRT to current tsk\n");
-			send_sig(SIGABRT, current, 2);
-		}
-
-		if (!rc1) kfree(scontext);
-		if (!rc2) kfree(tcontext);
-
-	}
-#endif
-
-#ifdef CONFIG_ALWAYS_ENFORCE
-	if (!(avd->flags & AVD_FLAGS_PERMISSIVE))
-#else
 	if (selinux_enforcing && !(avd->flags & AVD_FLAGS_PERMISSIVE))
-#endif
-// ] SEC_SELINUX_PORTING_COMMON
 		return -EACCES;
 
 	avc_update_node(AVC_CALLBACK_GRANT, requested, driver, xperm, ssid,

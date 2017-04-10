@@ -39,18 +39,10 @@
 #include "mm.h"
 
 #include <linux/vmalloc.h>
-#ifdef CONFIG_SENTINEL
-#include <linux/sentinel.h>
-#endif
-
 
 #if defined(CONFIG_ECT)
 #include <soc/samsung/ect_parser.h>
 #endif
-
-#ifdef CONFIG_TIMA_RKP
-#include <linux/rkp_entry.h> 
-#endif //CONFIG_TIMA_RKP
 
 static int iotable_on;
 
@@ -153,102 +145,17 @@ static void __init *early_alloc(unsigned long sz)
 	return ptr;
 }
 
-#ifdef CONFIG_TIMA_RKP
-/* Extra memory needed by VMM */
-void* vmm_extra_mem = 0;
-spinlock_t ro_rkp_pages_lock = __SPIN_LOCK_UNLOCKED();
-char ro_pages_stat[RO_PAGES] = {0};
-unsigned ro_alloc_last = 0; 
-int rkp_ro_mapped = 0; 
 
-
-void *rkp_ro_alloc(void)
-{
-	unsigned long flags;
-	int i, j;
-	void * alloc_addr = NULL;
-	
-	spin_lock_irqsave(&ro_rkp_pages_lock,flags);
-	
-	for (i = 0, j = ro_alloc_last; i < (RO_PAGES) ; i++) {
-		j =  (j+i) %(RO_PAGES); 
-		if (!ro_pages_stat[j]) {
-			ro_pages_stat[j] = 1;
-			ro_alloc_last = j+1;
-			alloc_addr = (void*) ((u64)RKP_RBUF_VA +  (j << PAGE_SHIFT));
-			break;
-		}
-	}
-	spin_unlock_irqrestore(&ro_rkp_pages_lock,flags);
-	
-	return alloc_addr;
-}
-
-void rkp_ro_free(void *free_addr)
-{
-	int i;
-	unsigned long flags;
-
-	i =  ((u64)free_addr - (u64)RKP_RBUF_VA) >> PAGE_SHIFT;
-	spin_lock_irqsave(&ro_rkp_pages_lock,flags);
-	ro_pages_stat[i] = 0;
-	ro_alloc_last = i; 
-	spin_unlock_irqrestore(&ro_rkp_pages_lock,flags);
-}
-
-unsigned int is_rkp_ro_page(u64 addr)
-{
-	if( (addr >= (u64)RKP_RBUF_VA)
-		&& (addr < (u64)(RKP_RBUF_VA+ TIMA_ROBUF_SIZE)))
-		return 1;
-	else return 0;
-}
-/* we suppose the whole block remap to page table should start with block borders */
-static inline void __init block_to_pages(pmd_t *pmd, unsigned long addr,
-				  unsigned long end, unsigned long pfn)
-{
-	pte_t *old_pte;  
-	pmd_t new ; 
-	pte_t *pte = rkp_ro_alloc();	
-
-	old_pte = pte;
-
-	__pmd_populate(&new, __pa(pte), PMD_TYPE_TABLE); /* populate to temporary pmd */
-
-	pte = pte_offset_kernel(&new, addr);
-
-	do {		
-		if (iotable_on == 1)
-			set_pte(pte, pfn_pte(pfn, pgprot_iotable_init(PAGE_KERNEL_EXEC)));
-		else
-			set_pte(pte, pfn_pte(pfn, PAGE_KERNEL_EXEC));
-		pfn++;
-	} while (pte++, addr += PAGE_SIZE, addr != end);
-
-	__pmd_populate(pmd, __pa(old_pte), PMD_TYPE_TABLE);
-}
-#endif
 static void __init alloc_init_pte(pmd_t *pmd, unsigned long addr,
 				  unsigned long end, unsigned long pfn,
 				  pgprot_t prot)
 {
 	pte_t *pte;
 
-#if defined(CONFIG_TIMA_RKP) && !defined(CONFIG_SENTINEL)
-	if(pmd_block(*pmd))
-		return block_to_pages(pmd, addr, end, pfn);
-#endif
 	if (pmd_none(*pmd)) {
-#ifdef CONFIG_SENTINEL
-		pte = sentinel_early_alloc(PTRS_PER_PTE * sizeof(pte_t), addr);
-#else
 		pte = early_alloc(PTRS_PER_PTE * sizeof(pte_t));
-#endif
 		__pmd_populate(pmd, __pa(pte), PMD_TYPE_TABLE);
 	}
-#if !defined(CONFIG_TIMA_RKP) && !defined(CONFIG_SENTINEL)
-	BUG_ON(pmd_bad(*pmd));
-#endif
 
 	pte = pte_offset_kernel(pmd, addr);
 	do {
@@ -281,19 +188,7 @@ static void __init alloc_init_pmd(pud_t *pud, unsigned long addr,
 	 * Check for initial section mappings in the pgd/pud and remove them.
 	 */
 	if (pud_none(*pud) || pud_bad(*pud)) {
-#ifdef CONFIG_TIMA_RKP
-#ifdef CONFIG_SENTINEL
-		pmd = sentinel_early_alloc(PTRS_PER_PMD * sizeof(pmd_t), addr);
-#else
-		pmd = rkp_ro_alloc();
-#endif
-#else	/* !CONFIG_TIMA_RKP */
-#ifdef CONFIG_SENTINEL
-		pmd = sentinel_early_alloc(PTRS_PER_PMD * sizeof(pmd_t), addr);
-#else
 		pmd = early_alloc(PTRS_PER_PMD * sizeof(pmd_t));
-#endif
-#endif
 		pud_populate(&init_mm, pud, pmd);
 	}
 
@@ -356,12 +251,7 @@ static void __init alloc_init_pud(pgd_t *pgd, unsigned long addr,
 			 */
 			if (!pud_none(old_pud)) {
 				phys_addr_t table = __pa(pmd_offset(&old_pud, 0));
-#ifdef CONFIG_TIMA_RKP
-				if ((u64) table < (u64) __pa(_text) || (u64) table > (u64) __pa(_etext))
-					memblock_free(table, PAGE_SIZE);
-#else
 				memblock_free(table, PAGE_SIZE);
-#endif
 				flush_tlb_all();
 			}
 		} else {
@@ -420,12 +310,6 @@ static void __init map_mem(void)
 	phys_addr_t start;
 	phys_addr_t end;
 
-#ifdef CONFIG_TIMA_RKP
-#ifndef CONFIG_SENTINEL
-	phys_addr_t mid = 0xBF000000;
-#endif
-	int do_memset = 0;
-#endif
 	/*
 	 * Temporarily limit the memblock range. We need to do this as
 	 * create_mapping requires puds, pmds and ptes to be allocated from
@@ -466,65 +350,9 @@ static void __init map_mem(void)
 		}
 #endif
 
-#ifdef CONFIG_TIMA_RKP
-	if (!do_memset) {
-#ifdef CONFIG_SENTINEL
-		create_mapping(start, __phys_to_virt(start), SENTINEL_MEMBLOCK_SIZE);
-		while (start < end) {
-			create_mapping(start, __phys_to_virt(start), PAGE_SIZE);
-			start += PAGE_SIZE;
-		}
-		memset((void*)RKP_RBUF_VA, 0, TIMA_ROBUF_SIZE);
-#else
-		create_mapping(start, __phys_to_virt(start), mid - start);
-		memset((void*)RKP_RBUF_VA, 0, TIMA_ROBUF_SIZE);
-		create_mapping(mid, __phys_to_virt(mid), end - mid);
-#endif
-		do_memset = 1;
-	}
-	else {
-#ifdef CONFIG_SENTINEL
-		create_mapping(start, __phys_to_virt(start), SENTINEL_MEMBLOCK_SIZE);
-		while (start < end) {
-			create_mapping(start, __phys_to_virt(start), PAGE_SIZE);
-			start += PAGE_SIZE;
-		}
-#else
 		create_mapping(start, __phys_to_virt(start), end - start);
-#endif
-	}
-#else /* !CONFIG_TIMA_RKP */
-#ifdef CONFIG_SENTINEL
-		create_mapping(start, __phys_to_virt(start), SENTINEL_MEMBLOCK_SIZE);
-		while (start < end) {
-			create_mapping(start, __phys_to_virt(start), PAGE_SIZE);
-			start += PAGE_SIZE;
-		}
-#else
-		create_mapping(start, __phys_to_virt(start), end - start);
-#endif
-#endif
 	}
 
-#ifdef CONFIG_TIMA_RKP
-	vmm_extra_mem = early_alloc(0x600000);
-	if ((u64) _text & (~PMD_MASK)) {
-		start = (phys_addr_t) __pa(_text) & PMD_MASK;
-		end = (phys_addr_t) __pa(_text);
-		create_mapping(start, __phys_to_virt(start), end - start);
-		start = (phys_addr_t) __pa(_text);
-		end = (phys_addr_t) ALIGN(__pa(_text), PMD_SIZE);
-		create_mapping(start, __phys_to_virt(start), end - start);
-	}
-	if ((u64) _etext & (~PMD_MASK)) {
-		start = (phys_addr_t) __pa(_etext) & PMD_MASK;
-		end = (phys_addr_t) __pa(_etext);
-		create_mapping(start, __phys_to_virt(start), end - start);
-		start = (phys_addr_t) __pa(_etext);
-		end = (phys_addr_t) ALIGN(__pa(_etext), PMD_SIZE);
-		create_mapping(start, __phys_to_virt(start), end - start);
-	}
-#endif
 	/* Limit no longer required. */
 	memblock_set_current_limit(MEMBLOCK_ALLOC_ANYWHERE);
 }
@@ -552,11 +380,7 @@ void __init paging_init(void)
 	/* allocate the zero page. */
 	/* change zero page address */
 
-#ifdef CONFIG_TIMA_RKP
-	zero_page = rkp_ro_alloc();
-#else	/* !CONFIG_TIMA_RKP */
 	zero_page = early_alloc(PAGE_SIZE);
-#endif
 
 	bootmem_init();
 

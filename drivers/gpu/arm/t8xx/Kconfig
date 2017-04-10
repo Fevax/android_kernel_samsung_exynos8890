@@ -53,10 +53,5 @@ source "drivers/gpu/arm/t8xx/r9p0/Kconfig"
 endif
 
 if MALI_R12P0
-	if DDK_VERSION_OS = "n"
-	source "drivers/gpu/arm/t8xx/r12p0_n/Kconfig"
-	endif
-	if DDK_VERSION_OS = "m"
-	source "drivers/gpu/arm/t8xx/r12p0_m/Kconfig"
-	endif
+source "drivers/gpu/arm/t8xx/r12p0_n/Kconfig"
 endif

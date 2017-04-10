@@ -36,9 +36,6 @@
 #include <asm/page.h>
 #include <asm/virt.h>
 
-#ifdef CONFIG_RKP_CFP_ROPP
-#include <asm/rkp_cfp.h>
-#endif
 #define KERNEL_RAM_VADDR	(PAGE_OFFSET + TEXT_OFFSET)
 
 #if (TEXT_OFFSET & 0xfff) != 0
@@ -233,10 +230,6 @@ section_table:
 #endif
 
 ENTRY(stext)
-#ifdef CONFIG_RKP_CFP_ROPP
-	/* Must intialize RRK to zero */
-	mov	RRK, #0
-#endif
 #ifdef CONFIG_RELOCATABLE_KERNEL
 	mov	x22, x1				// x1=PHYS_OFFSET
 	mov	x19, x2				// x2=real TEXT_OFFSET
@@ -468,10 +461,6 @@ ENTRY(__boot_cpu_mode)
 	.long	0
 	.popsection
 
-#ifdef CONFIG_RKP_CFP_ROPP
-tsk	.req	x28		// current thread_info
-#endif
-
 #ifdef CONFIG_SMP
 	.align	3
 1:	.quad	.
@@ -555,14 +544,6 @@ ENDPROC(secondary_startup)
 ENTRY(__secondary_switched)
 	ldr	x0, [x21]			// get secondary_data.stack
 	mov	sp, x0
-#ifdef CONFIG_RKP_CFP_ROPP
-	/* We are running off of the stack of the idle thread for this CPU.
-	 * The idle thread was forked from the CPU0 thread after it initialized its key.
-	 * We need to load our key from thread_info into x17 now.
-	 */
-	get_thread_info tsk
-	load_key tsk
-#endif
 	mov	x29, #0
 	b	secondary_start_kernel
 ENDPROC(__secondary_switched)
